@@ -1,32 +1,58 @@
 import re,os
 from glob import glob
 from collections import defaultdict
+from configparser import ConfigParser
+# from threading import Thread
+# from multiprocessing import Process
+# from queue import Queue
+# from pathlib import Path
 
-ALLOWED_EXTENSIONS = {"txt","csv","c","xml","py"}
-types=["*",""]
-for allow in ALLOWED_EXTENSIONS:
-    types[1]+="."+allow+" "
+def chk_necessary_file():
+    global ALLOWED_EXTENSIONS
+    global types
+    config = ConfigParser()
+    # config['File Extension'] = {'allow':{"txt","csv","c","xml","py","json","log","cpp","ini"}}
+    if not os.path.exists("configuration") :
+        os.mkdir("configuration")
+
+    if not os.path.exists("configuration\\config.ini"):
+        config['File Extension'] = {'allow':{"txt","csv","c","xml","py","json","log","cpp","ini"}}
+        with open("configuration\\config.ini",mode = "w",encoding="utf-8") as f:
+            config.write(f)
+    config.read("configuration\\config.ini")
+    ALLOWED_EXTENSIONS = eval(config.get("File Extension","allow"))
+    
+    for allow in ALLOWED_EXTENSIONS:
+        # print(allow)
+        types[1]+="."+allow+" "
+
+global ALLOWED_EXTENSIONS
+global types
+ALLOWED_EXTENSIONS = None
+types = ['*','']
+# ALLOWED_EXTENSIONS = {"txt","csv","c","xml","py","json","log","cpp","ini"}
+
 
 help_exlaination = \
 """
-Step 1.  Click File
-    Open a File or a Directory.
-
-Step 2.  Choose an Option
+Step 1.  Choose an Option
     <Option>
-    Default -> Pre-defination pattern.
-    Custom  -> Strings given to search, and 
-                type an <Enter> to seperate it.
+      Default  -> Pre-Defination pattern.
+      Custom  -> Customize strings from a txt file
 
+Step 2.
+    <Default> Select a Target file as the target to search 
+    <Custom> Select a Source file as the source string, and select a Target file as the target to search  
+    
 Step 3.  Click Start
     The results show below.
 """  
 
-
 class ConstantOption:
+    # global ALLOWED_EXTENSIONS
     def __init__(self,pattern):
         self.pattern = pattern
-    
+
     # def get_String(self,String):
     #     match = re.search(self.pattern,String)
     #     if match :
@@ -58,24 +84,37 @@ class ConstantOption:
         if match != [] :
             for i in range(len(match)):
                 match[i] = match[i][-7:] + ' ' +match[i][:-7]
-            print(match)
             return match 
         return
 
-    def record_fromfile(self,filepath):
+    def record_fromfile(self,filepath,error_records):
     # return a result of the dict in the file
+        # global error_records
         storedStr = dict()
-        with open(filepath,mode="r",encoding="utf-8") as f:
-            lines = f.readlines()
-        
+        # print(filepath)
+        try:
+            with open(filepath,mode="r",encoding="utf-8") as f:
+                lines = f.readlines()
+        except PermissionError as e:
+            error_records.update({filepath:"Permission denied"})
+            return
+        except UnicodeDecodeError as e:
+            error_records.update({filepath:"Can't be read because it is not a UTF-8 type"})
+            # keep = askokcancel("Warning",filepath+": Can't be read because it is not a UTF-8 type")
+            # print(error_records)
+            return
+        except Exception as e:
+            error_records.update({filepath:e})
+            # print(e)            
+            return
+
         for line in lines : # store the match results
             matchStr = self.get_String(line.strip("\n"))
             if matchStr :
-                
                 for match in matchStr:
                     list_position = list()
                     # storedStr.update({match:{filepath:[],"position":list_position}})
-                    storedStr.update({match:[filepath,{"position":list_position,"count":[]}]})
+                    storedStr.update({match:[filepath,{"position":list_position,"count":[],"total":0}]})
         position = 0
         for line in lines :  # count in the file
             position+=1
@@ -94,40 +133,77 @@ class ConstantOption:
                         if key == match:
                             if len(storedStr[key][1]['position']) < len(storedStr[key][1]["count"]):
                                 storedStr[key][1]['position'].append(position)
+                    else:
+                        storedStr[key][1]['total'] = sum(storedStr[key][1]['count'])
         return storedStr
 
 
     def filter_File_Path(self,filepath):
        
         def allowed_file(filename):
+            
             return '.' in filename and \
             filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+        
+        def glob_files(pathname,que):
+            file_list = glob(pathname,recursive=1)
+            que.put(glob_files)
+            return file_list
 
         if isinstance(filepath,tuple) :
             file_list = (p for p in filepath if "." in p and allowed_file(p) )
             return file_list
 
-        file_list = glob(filepath+"/**",recursive=1)
+        # file_list = glob(filepath+"/**",recursive=1)
 
+
+        # new_file_list = []
+        # for index in range(len(file_list)):
+        #     file_list[index]= file_list[index].replace("/","\\")
+        #     if allowed_file(file_list[index]) :
+        #         new_file_list.append(file_list[index])
         new_file_list = []
-        for index in range(len(file_list)):
-            file_list[index]= file_list[index].replace("/","\\")
-            if allowed_file(file_list[index]) :
+        for ext in ALLOWED_EXTENSIONS :
+            # myque = Queue()
+            # p1 = Process(target=glob_files,args=(filepath+f"/**/*.{ext}",myque))
+            # p1.start()
+            # p1.join()
+            
+            # thread = Thread(target=glob_files,args=(filepath+f"/**/*.{ext}",myque) )
+            # thread.start()
+            # thread.join()
+            # file_list = myque.get()
+            
+            # for path in pathObj.glob(f"**\*.{ext}"):
+            #     file_list.append(path)
+            file_list = glob(filepath+f"/**/*.{ext}",recursive=1)
+            # time.sleep(2)
+            for index in range(len(file_list)):
+                # file_list[index]= file_list[index].replace("/","\\")
                 new_file_list.append(file_list[index])
+                
+        # print(new_file_list) 
         
         return new_file_list
 
 
-    def get_Records(self,filepath):
+    def get_Records(self,filepath,error_records):
+        # # global error_records
+        # error_records = dict()
         records = []
         file_list = self.filter_File_Path(filepath)
         for file in file_list:
-            records += [self.record_fromfile(file)] 
+            record = self.record_fromfile(file,error_records)
+            # print(record)
+            if record :
+                records += [record] 
         
         merge_record = defaultdict(list)
         for r in records:
             for k, v in r.items():
                 merge_record[k].append(v) # merge dicts
+        # que.put(merge_record)
+        
         return merge_record
         
 
@@ -146,41 +222,70 @@ class CustomOption(ConstantOption):
             file_list = (p for p in filepath if "." in p and allowed_file(p) )
             return file_list
 
-        file_list = glob(filepath+"/**",recursive=1)
+        # file_list = glob(filepath+"/**",recursive=1)
+
+        # new_file_list = []
+        # for index in range(len(file_list)):
+        #     file_list[index]= file_list[index].replace("/","\\")
+        #     if allowed_file(file_list[index]) :
+        #         new_file_list.append(file_list[index])
 
         new_file_list = []
-        for index in range(len(file_list)):
-            file_list[index]= file_list[index].replace("/","\\")
-            if allowed_file(file_list[index]) :
+        for ext in ALLOWED_EXTENSIONS :
+            file_list = glob(filepath+f"/**/*.{ext}",recursive=1)
+            for index in range(len(file_list)):
+                file_list[index]= file_list[index].replace("/","\\")
                 new_file_list.append(file_list[index])
+                # time.sleep(0.5)
+            
+            
         
         return new_file_list
 
-    def record_fromfile(self,filepath,stringlist):
-        with open(filepath,mode="r",encoding="utf-8") as f:
-            lines = f.readlines()
+    def record_fromfile(self,filepath,stringlist,error_records):
+        try:
+            with open(filepath,mode="r",encoding="utf-8") as f:
+                lines = f.readlines()
+        except PermissionError as e:
+            error_records.update({filepath:"Permission denied"})
+            return
+        except UnicodeDecodeError as e:
+            error_records.update({filepath:"Can't be read because it is not a UTF-8 type"})
+            # print(error_records)
+            return
+        except Exception as e:
+            error_records.update({filepath:e})
+            # print(e)            
+            return
         storedStr = dict()
         for line in lines:
             for string in stringlist:
                 if string in line :
-                    storedStr.update({string:[filepath,{"position":[],"count":[]}]})
+                    storedStr.update({string:[filepath,{"position":[],"count":[],"total":0}]})
         position = 0
         for line in lines:
             position += 1
             for string in stringlist:
                 # if re.findall(string,line):
+                # print(storedStr)
                 if string in line:
                     count = line.count(string)
                     storedStr[string][1]["count"].append(count)
                     if len(storedStr[string][1]["count"]) > len(storedStr[string][1]["position"]):
                         storedStr[string][1]["position"].append(position) 
+                    storedStr[string][1]['total'] = sum(storedStr[string][1]['count'])
+                # print(storedStr[string])
         return storedStr
     
-    def get_Records(self,filepath,stringlist):
+    def get_Records(self,filepath,stringlist,error_records):
         records = []
+        if stringlist is None:
+            return 
         file_list = self.filter_File_Path(filepath)
         for file in file_list:
-            records += [self.record_fromfile(file,stringlist)] 
+            record = self.record_fromfile(file,stringlist,error_records)
+            if record :
+                records += [record] 
 
         merge_record = defaultdict(list)
         for r in records:
@@ -188,8 +293,8 @@ class CustomOption(ConstantOption):
                 merge_record[k].append(v) # merge dicts
         return merge_record
 
-def sort(records,flag):
-
+def sort_count(records,flag):
+    # print(records)
     if flag:
         for key,values in records.items():
             for value in values:
@@ -222,20 +327,191 @@ def sort(records,flag):
                         position[i],position[index] = position[index],position[i]
     return records
 
+def sort_line(records,flag):
+
+    if flag:
+       
+        for key,values in records.items():
+            for value in values:
+                position=value[1]['position']
+                count=value[1]['count']
+                for i in range(len(position)-1):
+                    maximun = position[i]
+                    index = i
+                    for j in range(i+1,len(position)):
+                        if maximun < position[j]:
+                            maximun = position[j]
+                            index = j
+                    if index != i :
+                        position[i],position[index] = maximun,position[i]
+                        count[i],count[index] = count[index],count[i]
+                        # count[i],count[index] = maximun,count[i]
+                        # position[i],position[index] = position[index],position[i]
+    else:
+       
+        for key,values in records.items():
+            for value in values:
+                position=value[1]['position']
+                count=value[1]['count']
+                for i in range(len(position)-1):
+                    minimun = position[i]
+                    index = i
+                    for j in range(i+1,len(position)):
+                        if minimun > position[j]:
+                            minimun = position[j]
+                            index = j
+                    if index != i :
+                        position[i],position[index] = minimun,position[i]
+                        count[i],count[index] = count[index],count[i]
+    
+    return records
+
+def sort_total(records,flag):
+    tmp_records = list(records.items())
+    single = 1
+    for i in range(len(tmp_records)):
+    # for j in range(len(tmp_records[i][1])):
+        if len(tmp_records[i][1]) > 1 :
+            single = 0
+            break
+    if flag:        
+        if single:
+            
+            for i in range(len(tmp_records)-1):
+                maximun = tmp_records[i][1][0][1]['total']
+                index = i
+                for j in range(i+1,len(tmp_records)):
+                    if maximun < tmp_records[j][1][0][1]['total']:
+                        maximun = tmp_records[j][1][0][1]['total']
+                        index = j
+                tmp_records[i],tmp_records[index] = tmp_records[index],tmp_records[i]
+        else:
+    
+            for i in range(len(tmp_records)):
+                
+                for j in range(len(tmp_records[i][1])-1):
+                    
+                    maximun = tmp_records[i][1][j][1]['total']
+                    index = j
+                    for k in range(j+1,len(tmp_records[i][1])):
+                        if maximun < tmp_records[i][1][k][1]['total']:
+                            maximun = tmp_records[i][1][k][1]['total']
+                            index = k
+                    # tmp_records[i][1][j][1]['total'],tmp_records[i][1][index][1]['total'] =\
+                    #     tmp_records[i][1][index][1]['total'],tmp_records[i][1][j][1]['total']
+                    tmp_records[i][1][j],tmp_records[i][1][index] =\
+                        tmp_records[i][1][index],tmp_records[i][1][j]
+                    # print(tmp_records[i][1][j])
+                    
+                
+                    # print(True)
+                    # maximun = tmp_records[i][1][j]
+            #     if maximun < tmp_records[j][1][j][1]['total']:
+            #         maximun = tmp_records[j][1][j][1]['total']
+            #         index = j
+            # tmp_records[i][1][j]
+    else:
+        
+        if single:
+            for i in range(len(tmp_records)-1):
+                minimun = tmp_records[i][1][0][1]['total']
+                index = i
+                for j in range(i+1,len(tmp_records)):
+                    if minimun > tmp_records[j][1][0][1]['total']:
+                        minimun = tmp_records[j][1][0][1]['total']
+                        index = j
+                tmp_records[i],tmp_records[index] = tmp_records[index],tmp_records[i]
+        else:
+      
+            for i in range(len(tmp_records)):
+                # print(tmp_records[i])
+                for j in range(len(tmp_records[i][1])-1):
+                    
+                    minimun = tmp_records[i][1][j][1]['total']
+                    index = j
+                    for k in range(j+1,len(tmp_records[i][1])):
+                        if minimun > tmp_records[i][1][k][1]['total']:
+                            minimun = tmp_records[i][1][k][1]['total']
+                            index = k
+                    tmp_records[i][1][j],tmp_records[i][1][index] =\
+                        tmp_records[i][1][index],tmp_records[i][1][j]
+
+    return dict(tmp_records)
+
+def sort_string(records,flag):
+    tmp_records = list(records.items())
+    if flag:
+        for i in range(len(tmp_records)-1):
+            max_length = len(tmp_records[i][0])
+            index = i
+            for j in range(i+1,len(tmp_records)):
+                if max_length < len(tmp_records[j][0]):
+                    max_length = len(tmp_records[j][0])
+                    index = j
+            tmp_records[i],tmp_records[index]=tmp_records[index],tmp_records[i]
+    else:
+        for i in range(len(tmp_records)-1):
+            
+            min_length = len(tmp_records[i][0])
+            index = i
+            for j in range(i+1,len(tmp_records)):
+                if min_length > len(tmp_records[j][0]):
+                    min_length = len(tmp_records[j][0])
+                    index = j
+            tmp_records[i],tmp_records[index]=tmp_records[index],tmp_records[i]
+    return dict(tmp_records)    
+            
+    #         for value in values:
+    #             position=value[1]['position']
+    #             count=value[1]['count']
+    #             for i in range(len(position)-1):
+    #                 maximun = position[i]
+    #                 index = i
+    #                 for j in range(i+1,len(position)):
+    #                     if maximun < position[j]:
+    #                         maximun = position[j]
+    #                         index = j
+    #                 if index != i :
+    #                     position[i],position[index] = maximun,position[i]
+    #                     count[i],count[index] = count[index],count[i]
+    #                     # count[i],count[index] = maximun,count[i]
+    #                     # position[i],position[index] = position[index],position[i]
+    # else:
+    #     for key,values in records.items():
+    #         for value in values:
+    #             position=value[1]['position']
+    #             count=value[1]['count']
+    #             for i in range(len(position)-1):
+    #                 minimun = position[i]
+    #                 index = i
+    #                 for j in range(i+1,len(position)):
+    #                     if minimun > position[j]:
+    #                         minimun = position[j]
+    #                         index = j
+    #                 if index != i :
+    #                     position[i],position[index] = minimun,position[i]
+    #                     count[i],count[index] = count[index],count[i]
+    return records
+
+
+
+
+
+
 
 def recovery_image():
-    if not os.path.exists(".\\ui_img"):
-        os.mkdir("ui_img")
-        with open('.\\ui_img\\start.png',mode="wb") as f:
+    if not os.path.exists(".\\img"):
+        os.mkdir("img")
+        with open('.\\img\\start.png',mode="wb") as f:
             f.write(byte_startPng)
-        with open('.\\ui_img\\search.ico',mode="wb") as f:
+        with open('.\\img\\search.ico',mode="wb") as f:
             f.write(byte_searchIco)
     else:
-        if not os.path.exists(".\\ui_img\\start.png"):
-            with open('.\\ui_img\\start.png',mode="wb") as f:
+        if not os.path.exists(".\\img\\start.png"):
+            with open('.\\img\\start.png',mode="wb") as f:
                 f.write(byte_startPng)
-        if not os.path.exists(".\\ui_img\\search.png"):
-            with open('.\\ui_img\\search.png',mode="wb") as f:
+        if not os.path.exists(".\\img\\search.png"):
+            with open('.\\img\\search.png',mode="wb") as f:
                 f.write(byte_searchIco)
     return
 byte_startPng=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00@\x00\x00\x00@\x08\x06\x00\x00\x00\xaaiq\xde\x00\x00\x00\x04sBIT\x08\x08\x08\x08|\x08d\x88\x00\x00\x00\tpHYs\x00\x00\x01\xd8\x00\x00\x01\xd8\x01\xfa\\\xa6r\x00\x00\x00\x19tEXtSoftware\x00www.inkscape.org\x9b\xee<\x1a\x00\x00\x08\xd0IDATx\x9c\xed\x99ypTE\x1a\xc0\x7f\xfdf2\x93c\x12r\x89\x84L\x0e\xceL \x843\x06I\x02\x01\x15\xe3\xba\xe0\x85\x80%Y\xdc\xdd*w\xd1\xe8\xfe\xb1\xd7?\xd6n\xb6\xd4*Kw\xd5Rj\x01q\xb7\xb6DV\xb4\x14AwY<\x08+\x88\x84\x08\xa2\x01\xc9aNrOH\x089f2\xd7\xeb\xfd#\x99I\xc2\xcc\xc8a\xb0t}\xbf\xaaT\xa6\xbf\xfe\xbe\xee\xef\xeb\xee\xf7\xbd~\xdd\xa0\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xf1\x03C\\\xad\xe1\xa6\xc6\xbf\xc6\x8c\xa7#W\xca\x07\xcex}\x8d\xdd\xe5\xf6\t2\xef?\x7f5\xed\\r\x00\x8ae\xb1\xd2i\x9d\x94\xad\xa8\xca\x1d\x12\xb1\x14T3\x88\xeb\x01\xc3\xd5t8^\xa8R`\x93\xa2\xabW\x95=\rN}O\x8dG\xd1\xf5\xa9"FB+\xc8C\xa8\xba=\xa4\xd7\x94!\x8a\xd5\xafk\'\xe8\x00\x14\xcbb\xe5\\G\xc2z$\x8f\x83\x98:\xfe!\x8c?6)\x9c%v}E\x83K7\x0b\x08\x01\xea\x90\xe21,\x1bv!\x84\x0cd\x13p\x00\x1e\xb5n\x9d\xa1z\x94\xd7\x80\x85\xd7\xd0\xdfkF\x8fG\xf4\xef\x1e0Zm\x12\xef\xc4\x1d\xc7#\xeecva\xcd\xc5\xba~\x03\xf0p\xeb\xd6\xa5B(o\x02\xd7\x05j\\\'\x14\xa2\x940LJ\xd8\xf8z\xfd\r\xe9W\xed\xf4\xaav<rh\xc5{\x80wm\x86\xeaf\x972sX\xa5\x1b\xa1\xac%m\xc3\x81\xd1vc\x06\xa0\xa8}\xfb\n\xa4\xdc\xcf\xd0\xf2\xf1\x11\xad\x8b \'\xcc\xc2\x9c\xd0T\x12\xf5\xb1\xd7.\x8aq\xa0\xc5\xddE\xf9`#Gl\x15\\Pm\xbc3`\xa8=\xebV\xa6\rW\xbb@\xde\x8ae\xe3A\xaf\xbeo\x00\x8a\xda\xb7O\x11R\x96I\x88\xf7\xca\x14\x14n3\xcdgED&\x06\xa1\xff\x16\xc3\xf8\xe68\xa5\x9b\x03\x03\xe5\xec\xeb\xfb\x8cW\xfa\x8du\xbd\xaa\xefq\xe8\xc6#\xb2\xbd\x8f\x83\x02\x80\x94\x02)w\x8d\x0e>L\x18\xd8\x14s+\x05\xa6\x05\xdf\xbb\xe0\x01\x0cB\xcfm\xa6\x05<\x14[\xc0\xfdQ2E \x1d\xc3U\xb1(\xf2U\xa4\x140<\x00E\x1d/\xaf\x05n\xf0\x1a+\x086F/\xc7b4\x7f\xfb\x9e\x8f3\xe9F3\x8fF\xaf\xd0e\x1ai\xf7\t\x05\xd9T\xedX3\xf4SJQ\xd4\xbe\xbd\x12\xf0&\x0bn3-\xe0G\xa6\xe0/\x00\xdb\xc0\x00\xf55\xf5\x00\xa4N\x9bB\x84)\xc2W\xd7}\xae\x9b\xc6\xba\x06?\x9b\xeb\'Ob\xb2y\xb2\xaf\xac\xaa*\xd5g\xaaH\x9e\x92BxD\xb8\x9f~G[;\xadM\xad\x00\xe8\xf4z\xcc\xc9fb\xe3G\xf2O{k;m\xcd\xad~vI\xa9I\xc4O\xf4\xcf\xdf{\xfb\x8fsWK\x85M\x82\xb7\xb3j\xd2\n-\xfa\xa2\xb6m\x0b\x11\xbeLI\x94\x12\xce\xcd\x11s\x83\x06\x7f\xecp)o\xbc\xb2\x0b\xa7\xd3\t\x80\xa2(d-\xb9\x815\x1b\xd6\x12\x1a\x16\xca\xce\xbf\xed\xa0\xfaL\x95\x9f]\xd4\x84(\x9e|\xe1)_\xf9\xe0{%\xec\xd9\xb5\x9b\xb4Yi\x14\xfd\xfeW~\xfa\xdb\x9e\xdbBgG\xa7\xaf,\x84 \x7f\xe5r\xee\xba\xef\x1e\x84\x10\xbc\xf4\xfcV:;\xac~v)SS\xf9\xcd\x1f\x7f\xe7\'/\x88\x98\xcb<c\xbd\xf5\xa4c0uX4\x93\x8aW\xe7\xeb\xb2~\xbbz\x93\x80\xa5^\xc5\xfc\x88\x0c\xd2\x83,\xfd\xf3]\xddl~\xe6E<n7\x19\xf3\xe6`NI\xa2\xbbkh\xc6\xa3c\xa2I\x99\x9aJtL4\x06\xa3\x01\x83\xc1@wW7\x89\xc9f2\xe7g\xb2$?\x87\xc4\xa4D\x00\xa4\x94\xecx\xe9\x15l\x036\xba:\xbbX\xb8x!\xa6H\xd3\x98\xbe\xde\x7f\xf7=\x1c\x0e\x077.[Bbr"]\x9d]|U\xf9\x15q\xf1\xf1\x98S\xccL\x88\x9e@xx8 \xe9\xed\xe9e\xea\x8ci\xcc\x9a\x9bA\xce\xf2\\&N\x9a\xe8\xe7\xbb^\xe8\x08\x15N\xe3\x9e~\xeb\xe87\\\x87^HrG+f\x1aS\x02\x06\x0f\xd0P\xdb\x80\xc7\xedf\xd1\x8d7\xb0\xf1\x97\x0f\x00\xd0\xd7\xdb\xc7\xc9\xb2\x13d-\x19J!i\xb3-\xa4\xcd\xb6\xf0\xc9GG\xa8\xa9\xaa!=#\x9d;\xd6\xdd5\xa6\x9d\xda\xaa\x1a\xceYGf\xb7\xecH\x19\xab\xd6\xac\x0e\xd8\xe7\xbd\x1b\xd6\x11b\x08\xe1\xf4\xa2Sl{n\x0b\xa7N\x96\x93\x9d\xb7\x98yY\xf3\x99\x975\x9f}o\xff\x8b\xa6\x86&\x16d/d\xd9-\xf9A}\x07\xc8\x0b3\x87\xc1\xe9\x11\x81 WA\x928R\x16\x98C\xe2\x82601\xe1z\x84\x10\x9c:\xf9\x05o\xef\xda\x8d\xb5\xddJdT$Ko\xce\',\xfc\xf27F\xa5\x87\x8f\x02\x90\xbb"\x0f\x80\xb2\x8fKQ\xd5\xaf\xdd\xb2s\xbek\xe8[G\xa7\xd7]v?\x17\x93b\x88CA\x8c\xee(Q\x8f \xc1[2)\xa1(\xc3o\xc6@$&%\xb2rU\x01\xef\xbf\xbb\x9f\x92\xff|\xc8\xc1\xfd\x07\x98=7\x83\xd5k\xef$!1!\xa8\xddh\x1c\x83\x0e>?~\x12\x9d^\xcf\xedw\xaf\xa2\xa9\xa1\x89\xc6\xba\x06\xaa\xcfTa\xc9H\xf7\xd3\x7f\xf6\x89?\xe3q\xbbiomG\x08\xc1\x92e9\x97\x1f\xf1E\xe8P\x98\xa4\x0b\x1dh\xf5\xd8#\xbd!\x05\x8f6\x08?\xbeg\x15\x7fx\xba\x98[n_\x89)\xd2\xc4\xe9\xcfO\xf1\xec\xe3\xcf\xd0\x1a #\x07\xe2\xc4\xb1\xe38\x06\x1d\xcc\x997\x07S\xa4\x89\xec\xbc\xc5\xc0\xc8\xaa\xb8\x98\xe6\xc6&\xdaZ\xda\x88\x9a\x10E\xe1\x83\x1bI\x9bm\xb9R\x97\xc7 \xc7~\x13\xa9\n\xe0\xf3\xbc_\x1d\xc4\xc3\xd7/E\x80\xf8\x89\xd7\xb1z\xed\x9d\xfc\xe9/O\x90w\xd3R\x06\xed\x83\x1c\xd8\xf7\xc1e9p\xecp)\x00\xad\xcd-l~\xfa\x05\xca>>\x06@\xf9\x89/\xb0\r\xd8\xfc\xf4#\xa3\x86&k\xe1\xe2E\xbe<s\xb5\xb8\xa5J\xbb{pt\xb6m\x1d3\x00\x12I\xb3\xab+h\x03{^\x7f\x9b\xcdO\xbf\xe0{=\x85\x18B\xb0d\xcc\x02\x08\xe8\xfc\xc5X\xdb\xad\xd4\xd7\xd4\xf9~W}YIC\xed\xd0~\xc2\xe5r\xf1\xd9\xb1\x13~6\x9b~\xfd0aaa\x94\xec?\xc0\x7f\xdf?\xe8W\x7f%4\xba\xce!\xc7~\xff\xb4\xea\x05\x1c\x92\x90\xef\x95\x9cr4\x92\x12\x12\xf0C\x90\xce\xf6\x0e\xaa\xbe\xac\xe4\xa9\xc7\x9ed\xbae\x06\xe1\x11\xe1\x94\x7f\xf6\x05\x00\xf3\xb2\xe6_\xd2\x81\xd2C\x9f \xa5$\'?\x97\x9c\xe5#/\x9f\xa6\xc6&^\xfb\xfbNJ\x0f\x1f\xf5%F/\t\xe6\xc9\xfc\xf4\xe1\x9f\xb3\xed\xb9-\xec\xfe\xe7\x9b\xc4\xc6\xc7\x91\xb9 \xf3\n\xc2\x1e\xe1c{\xb3\x1d\x18\xc9\xd6B\x1cRT)\xf7\x8eV\xfa\xc4V\x89C\xba\x026\xb0q\xd3\xcf\xc8]\x91\x87\xc7\xe3\xe1L\xf9\x97\x1c?\xfa)\x1e\x8f\xca\xcaU\x05d\xe7.\x1e\xa3\x1b\x1a\x1a:\xf4?,\xd4\';[\xdf\x88\x10\x82\x15\x057\x91\x94\x9a\xec\xfb[\x9cw#\xb1\xf1\xb1\xb4\x9cmF\xf5\x0c=\x82\xc6\xd0P\x0c\x06\x03\x8a\xa2\x90>g\x16\xeb\x1f\xb8\x0f)%G?:2\xa6\x1f\xa3\xd1\xe8\xd7O \x1c\xd2\xc5\xf3=\xb5\x1dc\x84\xc2\xbd7\xe0V\xb8\xc0\xb4\x80\xdb/\xb1\x15n\xa8kD\xaa*I)IDEO\xf0\xd3QU\x95\xca\xd3\x15L\xb7\xcc\xc0`\x18:=;\xdf\xd5M\xcf\xf9\x1e\xa6L\xf7?`\xea\xec\xe8d\xd0n\')5\x19\x00k[\x07N\x97\x0bs\xf2\xc8\xa6\xac\xb6\xba\x96\xb8\xeb\xe2\x88\x8e\x89\xf6\xc9\\N\x17\xd5\x15U\xa4g\xccB\xd1\x05\xcf\xe9{\xfa>\xe5\xee\xb6J\xbb\x94\xbe\x15PEZa\xba\x00(j\xdbv/\x887|\x03\x83\xe0\x171+\x99mL\x0e\xda\xe0\xf7\x89\nG3\xeb\xda\x0e\xd4\x9fr(S|B)\xd6\x90^\xf8\x96\x02\xb0y\xd2\x83o\x02\xc7|uH\xfe\xd1s\x90\nG\xf3\xb7\xef\xed8s\xc6\xd1\xc4\x8b=%\x9e\xd3\x0e1\xf2%&d)\x96\r\xbb\xc1{\x1e \x84\xd4\xe3Y\x0f\xf8\xf6\xa7\x83\xd2\xc9\xd6\xf3\xfb\xd9\xd7\x7f\x02\xa7t\xf3}\xc3)\xdd\xfc\xbb\xff\x04[\xba\xdfc\xe7\x05\xd1(\x11\xc6\xe1\xaan\xdcJ\xa1\xf7\x90\xf4\xb2\x8e\xc4&(\xe1\xe4\x84\xa73\xc7\x98BbH\xdc\xd5_&\\c$\xd0\xe2\xea\xa2\xdc\xd1\xc0\x11[%\xbd\xaa\x8dwl\xc6\x9a\xb3.1}X\xc5\x05\x14`\xf9I\x89\xd7\xc6/\x96GZ\xb7\xe7I!\xdf"\xd8\xa1(\nQ\xba\xef\xde\xa1h\x9fj\xa7\xcfc\xf7m\xe4\x02\x1e\x8a*r\x1d37~8\xda.\xe0d>d}y\xba\xe2\x91\xaf\x81\\tM\xbd\xbeF\\\xf0(}o\r\x84\x9c\xb3I\xe1Mz\x97\x7f,\xeeCJ\xf1H\xc7\xcb\xeb\xa5\x94\x8f\x03\xd3\x82\xea}\x87\xb0\xa9\xc2Y28\xe6b\xa4\x16\xc1c\xcc,|\xfd\x8a.FFS,\x8b\x95\xce\x8e\x84,\xa1*w\xa2\xc8<$I\xc0$\xbe\x03Wcv8w\xc1CO\xbdK\xd7\xf3\x95K\xa7\x1f\x90DK\x94\x16\x84<\x84`/3\xea>\xbd\xea\xab\xb1K\xf1\xffr9\xaa\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xa1\xf1\x83\xe3\x7f\x97.Y\x87-T1\xab\x00\x00\x00\x00IEND\xaeB`\x82'
